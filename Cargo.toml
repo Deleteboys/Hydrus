@@ -1,0 +1,17 @@
+[package]
+name = "Hydrus"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+strip = true
+#opt-level = "z"
+
+[dependencies]
+winapi = { version = "0.3.9", features = ["minwindef", "memoryapi", "consoleapi", "libloaderapi", "winnt", "wincon", "winuser", "processthreadsapi", "windef", "ntdef", "fileapi", "minwinbase", "errhandlingapi", "winbase", "handleapi"] }
+widestring = "1.1.0"
+colored = "2.1.0"
+serde = { version = "1.0.198", features = ["derive"] }
+serde_json = "1.0.116"
