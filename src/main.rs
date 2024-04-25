@@ -1,21 +1,23 @@
-use std::ffi::{CString, OsString};
+use std::ffi::{c_char, c_uchar, CString, OsString};
 use std::io::{Error, ErrorKind, stdin, stdout, Write};
 use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use std::process::exit;
 use std::{mem, ptr};
+use std::mem::size_of;
 use widestring::WideCString;
 use winapi::shared::minwindef::{BOOL, DWORD, LPARAM, MAX_PATH};
-use winapi::shared::ntdef::NULL;
+use winapi::shared::ntdef::{NULL, UCHAR};
 use winapi::shared::windef::HWND;
 use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::handleapi::CloseHandle;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::memoryapi::{VirtualAllocEx, WriteProcessMemory};
 use winapi::um::processthreadsapi::{CreateRemoteThread, OpenProcess};
-use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PROCESS_ALL_ACCESS, PROCESS_VM_READ, PROCESS_VM_WRITE};
+use winapi::um::winnt::{CHAR, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PROCESS_ALL_ACCESS, PROCESS_VM_READ, PROCESS_VM_WRITE};
 use winapi::um::winuser::{EnumWindows, GetWindowTextLengthA, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
 use colored::Colorize;
+use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, LPPROCESSENTRY32, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPMODULE, TH32CS_SNAPPROCESS};
 use serde::Serialize;
 
 fn logo() {
@@ -34,6 +36,51 @@ fn logo() {
                 ░░░░░░
 
 ".green())
+}
+
+fn enum_processes() {
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS | TH32CS_SNAPMODULE, 0);
+        if !snapshot.is_null() {
+            let mut proc_entry: PROCESSENTRY32 = PROCESSENTRY32 {
+                dwSize: 0,
+                cntUsage: 0,
+                th32ProcessID: 0,
+                th32DefaultHeapID: 0,
+                th32ModuleID: 0,
+                cntThreads: 0,
+                th32ParentProcessID: 0,
+                pcPriClassBase: 0,
+                dwFlags: 0,
+                szExeFile: [0; MAX_PATH],
+            };
+
+            proc_entry.dwSize = size_of::<PROCESSENTRY32>() as u32;
+            if Process32First(snapshot, &mut proc_entry as *mut PROCESSENTRY32) != 0 {
+                loop {
+                    let exe_file = proc_entry.szExeFile.clone();
+                    let mut exe_name = "Unkown".to_string();
+
+                    if !exe_file.is_empty() {
+                        if !exe_file.as_ptr().is_null() {
+                            let exe_file = mem::transmute::<Vec<i8>,Vec<u8>>(exe_file.to_vec());
+                            let length = String::from_utf8_unchecked(exe_file.clone()).find("\0").unwrap();
+                            let string = String::from_utf8_unchecked(exe_file.clone()[..length].to_owned());
+                            exe_name = string;
+                        }
+                    }
+                    println!("{:?} {:?}", proc_entry.th32ProcessID, exe_name.clone());
+                    let process_id = format!("{:#0X}", proc_entry.th32ProcessID);
+                    println!("Process id: {} , Exe Name: {}", process_id, exe_name);
+                    if Process32Next(snapshot, &mut proc_entry as *mut PROCESSENTRY32) == 0 {
+                        break;
+                    }
+                }
+            } else {
+                println!("Process32First failed: {:#x}", GetLastError());
+            }
+        }
+    }
 }
 
 extern "system" fn enum_windows_proc(hwnd: HWND, _: LPARAM) -> BOOL {
@@ -124,7 +171,7 @@ fn inject_into_process(proc_id: DWORD, dll: &Path) {
             println!("Failed to get the address of LoadLibraryW.");
             exit(1)
         }
-         let hthread = CreateRemoteThread(h_process, ptr::null_mut(), 0, Some(mem::transmute(h_loadlibraryw)), allocate_memory, 0, ptr::null_mut());
+        let hthread = CreateRemoteThread(h_process, ptr::null_mut(), 0, Some(mem::transmute(h_loadlibraryw)), allocate_memory, 0, ptr::null_mut());
 
         CloseHandle(hthread);
         println!("Injected successfully")

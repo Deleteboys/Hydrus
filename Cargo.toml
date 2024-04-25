@@ -10,7 +10,7 @@ strip = true
 #opt-level = "z"
 
 [dependencies]
-winapi = { version = "0.3.9", features = ["minwindef", "memoryapi", "consoleapi", "libloaderapi", "winnt", "wincon", "winuser", "processthreadsapi", "windef", "ntdef", "fileapi", "minwinbase", "errhandlingapi", "winbase", "handleapi"] }
+winapi = { version = "0.3.9", features = ["minwindef", "memoryapi", "consoleapi", "libloaderapi", "winnt", "wincon", "winuser", "processthreadsapi", "windef", "ntdef", "fileapi", "minwinbase", "errhandlingapi", "winbase", "handleapi", "tlhelp32"] }
 widestring = "1.1.0"
 colored = "2.1.0"
 serde = { version = "1.0.198", features = ["derive"] }
