@@ -1,9 +1,9 @@
-use std::ffi::{c_char, c_uchar, CString, OsString};
-use std::io::{Error, ErrorKind, stdin, stdout, Write};
+use std::ffi::{c_char, c_uchar, CStr, CString, OsString};
+use std::io::{Error, ErrorKind, Read, stdin, stdout, Write};
 use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use std::process::exit;
-use std::{mem, ptr};
+use std::{fs, mem, ptr, slice};
 use std::mem::size_of;
 use widestring::WideCString;
 use winapi::shared::minwindef::{BOOL, DWORD, LPARAM, MAX_PATH};
@@ -14,11 +14,10 @@ use winapi::um::handleapi::CloseHandle;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::memoryapi::{VirtualAllocEx, WriteProcessMemory};
 use winapi::um::processthreadsapi::{CreateRemoteThread, OpenProcess};
-use winapi::um::winnt::{CHAR, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, PROCESS_ALL_ACCESS, PROCESS_VM_READ, PROCESS_VM_WRITE};
+use winapi::um::winnt::{CHAR, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, PAGE_READWRITE, PROCESS_ALL_ACCESS, PROCESS_VM_READ, PROCESS_VM_WRITE};
 use winapi::um::winuser::{EnumWindows, GetWindowTextLengthA, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
 use colored::Colorize;
 use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, LPPROCESSENTRY32, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPMODULE, TH32CS_SNAPPROCESS};
-use serde::Serialize;
 
 fn logo() {
     println!("{}", "
@@ -63,7 +62,7 @@ fn enum_processes() {
 
                     if !exe_file.is_empty() {
                         if !exe_file.as_ptr().is_null() {
-                            let exe_file = mem::transmute::<Vec<i8>,Vec<u8>>(exe_file.to_vec());
+                            let exe_file = mem::transmute::<Vec<i8>, Vec<u8>>(exe_file.to_vec());
                             let length = String::from_utf8_unchecked(exe_file.clone()).find("\0").unwrap();
                             let string = String::from_utf8_unchecked(exe_file.clone()[..length].to_owned());
                             exe_name = string;
@@ -123,6 +122,86 @@ fn convert_hex_to_dword(input: &str) -> DWORD {
         }
     };
     proc_id
+}
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct PeHeader {
+    mMagic: [c_char; 4],
+    mMachine: u16,
+    mNumberOfSections: u16,
+    mTimeDateStamp: u32,
+    mPointerToSymbolTable: u32,
+    mNumberOfSymbols: u32,
+    mSizeOfOptionalHeader: u16,
+    mCharacteristics: u16,
+}
+
+fn manual_map(proc_id: DWORD, dll: &Path) {
+    unsafe {
+        let h_process = OpenProcess(PROCESS_ALL_ACCESS | PROCESS_VM_WRITE | PROCESS_VM_READ, 0, proc_id);
+        if h_process == NULL {
+            println!("Program could not be found the process id was {:#0X}", proc_id);
+            exit(1)
+        }
+        let dll_path = dll;
+        let full_path = dll_path.canonicalize().expect("Error");
+        let dll_size = full_path.metadata().unwrap().len();
+
+        // struct PeHeader {
+        //     uint32_t mMagic; // PE\0\0 or 0x00004550
+        //     uint16_t mMachine;
+        //     uint16_t mNumberOfSections;
+        //     uint32_t mTimeDateStamp;
+        //     uint32_t mPointerToSymbolTable;
+        //     uint32_t mNumberOfSymbols;
+        //     uint16_t mSizeOfOptionalHeader;
+        //     uint16_t mCharacteristics;
+        // };
+
+        // println!("{}", dll_size);
+
+        // let path_len = (full_path.len() * 2) + 1;
+
+        let mut pe = PeHeader{
+            mMagic: [0; 4],
+            mMachine: 0,
+            mNumberOfSections: 0,
+            mTimeDateStamp: 0,
+            mPointerToSymbolTable: 0,
+            mNumberOfSymbols: 0,
+            mSizeOfOptionalHeader: 0,
+            mCharacteristics: 0,
+        };
+
+        let mut allocate_memory = VirtualAllocEx(h_process, ptr::null_mut(), dll_size as usize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        if allocate_memory == NULL {
+            println!("Hooking the memory didn't work");
+            exit(1)
+        }
+
+        let mut byte_content1 = fs::read(full_path).unwrap();
+        let mut byte_content =byte_content1.as_slice();
+        println!("{:?}", byte_content);
+
+        let peheader_size = mem::size_of::<PeHeader>();
+
+        let mut config_slice = slice::from_raw_parts_mut(&mut pe as *mut _ as *mut u8, peheader_size);
+        byte_content.read_exact(&mut config_slice).expect("TODO: panic message");
+
+        println!("{:?}", CStr::from_ptr(pe.mMagic.as_ptr()));
+
+
+        if WriteProcessMemory(h_process,
+                              allocate_memory,
+                              byte_content.as_ptr() as *mut _,
+                              dll_size as usize,
+                              ptr::null_mut()) == 0 {
+            let error = GetLastError();
+            println!("{:?}", error);
+            println!("Writing Memory went wrong");
+            exit(1)
+        }
+    }
 }
 
 fn inject_into_process(proc_id: DWORD, dll: &Path) {
@@ -195,5 +274,6 @@ fn main() {
     let dll_path = dll_path.trim();
     let dll_path = Path::new(dll_path);
     let proc_id = convert_hex_to_dword(process_id.trim());
-    inject_into_process(proc_id, dll_path)
+    // inject_into_process(proc_id, dll_path)
+    manual_map(proc_id, dll_path)
 }
